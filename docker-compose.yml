@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: sangini_db
+    environment:
+      POSTGRES_USER: sangini_user
+      POSTGRES_PASSWORD: sangini_password
+      POSTGRES_DB: sangini_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # This maps the local schema.sql file to the docker initialization folder.
+      # Any SQL file in this folder runs automatically the first time the database starts up.
+      - ./backend/app/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
+volumes:
+  postgres_data:
