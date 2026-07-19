@@ -50,12 +50,18 @@ Sangini AI provides three distinct, real-time user interfaces powered by **Next.
 
 ## ⚙️ Local Installation & Quick Start
 
-Follow these steps to run Sangini AI locally on your machine.
+Follow these steps to run Sangini AI locally. If you downloaded the ZIP file, ensure you have **Docker**, **Python 3.10+**, and **Node.js** installed on your machine.
 
-### 1. Database Setup
-Ensure you have a PostgreSQL database running (locally or via Supabase/Railway).
+### 1. Database Setup (Docker)
+We use Docker to instantly spin up a local PostgreSQL database with the exact schema needed.
+Open a terminal in the root project folder (where `docker-compose.yml` is located) and run:
+```bash
+docker-compose up -d
+```
+*This will pull the Postgres image, start the database on port 5432, and automatically initialize all the required tables using `schema.sql`.*
 
 ### 2. Backend Setup (FastAPI)
+Open a new terminal window:
 ```bash
 cd backend
 python -m venv venv
@@ -65,18 +71,19 @@ pip install -r requirements.txt
 
 Create a `.env` file in the `backend/` directory:
 ```env
-DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/sangini
-OPEN_ROUTER_API_KEY=openrouter_api_key
+# Connects to the local Docker database
+DATABASE_URL=postgresql+asyncpg://sangini_user:sangini_password@localhost:5432/sangini_db
+OPEN_ROUTER_API_KEY=your_gemini_or_openrouter_api_key
 ```
 
-Seed the database and start the server:
+Seed the database with dummy test users and start the server:
 ```bash
 python seed.py
 uvicorn app.main:app --host 0.0.0.0 --port 8006
 ```
 
 ### 3. Frontend Setup (Next.js)
-Open a new terminal window:
+Open a third terminal window:
 ```bash
 cd frontend
 npm install
@@ -94,6 +101,7 @@ npm run dev
 ```
 
 ### 4. View the Dashboards
+Open your browser and navigate to:
 - **Customer View:** `http://localhost:3000/customer`
 - **SHG Member View:** `http://localhost:3000/shg`
 - **Admin View:** `http://localhost:3000/admin`
