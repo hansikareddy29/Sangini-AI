@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.models import Product, Inventory
+from app.schemas.state_schema import SharedState
+from app.websocket.manager import manager
 
 logger = logging.getLogger(__name__)
 
@@ -117,3 +119,20 @@ async def check_inventory(order_json: Dict[str, Any], db: AsyncSession) -> Dict[
         await db.rollback()
         logger.error(f"Unexpected error in check_inventory: {str(e)}")
         return {"status": "error", "message": f"Unexpected error occurred: {str(e)}"}
+
+async def check_inventory_node(state: SharedState, db: AsyncSession) -> dict:
+    """
+    LangGraph node for checking inventory.
+    Reads from SharedState.order and updates SharedState.inventory.
+    """
+    order_data = state.get("order", {})
+    if not order_data or "extracted_items" not in order_data:
+        return {"inventory": {"error": "No extracted items found in order state."}}
+    
+    # We pass the extracted items as "items" list to check_inventory
+    extracted_items = order_data["extracted_items"].get("orders", [])
+    
+    # check_inventory expects {"items": [...]}
+    result = await check_inventory({"items": extracted_items}, db)
+    
+    return {"inventory": result}

@@ -1,3 +1,14 @@
+-- 0. Create ENUM Types
+CREATE TYPE order_status AS ENUM (
+    'pending', 'inventory_reserved', 'allocated', 'partially_allocated', 
+    'replan_required', 'in_production', 'ready_for_delivery', 'completed', 
+    'cancelled', 'rejected'
+);
+
+CREATE TYPE allocation_status AS ENUM (
+    'assigned', 'in_progress', 'completed', 'declined', 'cancelled'
+);
+
 -- 1. Create SHGs Table
 CREATE TABLE shgs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -19,7 +30,7 @@ CREATE TABLE members (
     daily_capacity INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
-
+ 
 -- 3. Create Products Table
 CREATE TABLE products (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -51,7 +62,7 @@ CREATE TABLE inventory (
 CREATE TABLE orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customer_phone VARCHAR(20) NOT NULL,
-    status VARCHAR(50) DEFAULT 'pending', -- pending, partially_allocated, allocated, completed
+    status order_status DEFAULT 'pending',
     deadline DATE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -70,7 +81,16 @@ CREATE TABLE allocations (
     order_item_id UUID NOT NULL REFERENCES order_items(id) ON DELETE CASCADE,
     member_id UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     allocated_quantity INTEGER NOT NULL,
-    status VARCHAR(50) DEFAULT 'assigned', -- assigned, in_progress, completed
+    status allocation_status DEFAULT 'assigned',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 9. Create Inventory Reservations Table
+CREATE TABLE inventory_reservations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    inventory_id UUID NOT NULL REFERENCES inventory(id) ON DELETE CASCADE,
+    order_item_id UUID NOT NULL REFERENCES order_items(id) ON DELETE CASCADE,
+    reserved_quantity INTEGER NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

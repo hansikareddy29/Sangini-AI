@@ -2,15 +2,36 @@ from fastapi import FastAPI, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from datetime import datetime
-
-from app.agents.order_agent import extract_order
+from app.agents.order_agent import extract_order, process_order_node
+from app.agents.inventory_agent import check_inventory_node
+from app.agents.community_agent import check_community_capacity
+from app.agents.allocation_agent import allocate_order
 from app.database.connection import get_db
-from app.models.models import Inventory, Product, Order, OrderItem
+from app.models.models import Inventory, Product, Order, OrderItem, OrderStatus
 from app.schemas.schemas import InventoryResponse
+from app.schemas.state_schema import SharedState
+from app.services.lifecycle_service import transition_order_state
+from fastapi.middleware.cors import CORSMiddleware
+from app.workflows.main_workflow import graph as workflow_graph
+from app.api.whatsapp import router as whatsapp_router
+from app.api.chat import router as chat_router
+from app.api.admin import router as admin_router
+from app.api.visualizer import router as visualizer_router
 
 app = FastAPI(title="Sangini API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Since it's a hackathon demo, allow all
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(whatsapp_router)
+app.include_router(chat_router)
+app.include_router(admin_router)
+app.include_router(visualizer_router)
 
 @app.get("/")
 def home():
@@ -31,56 +52,71 @@ class OrderRequest(BaseModel):
     customer_phone: str
     message: str
 
+class ResumeRequest(BaseModel):
+    thread_id: str
+    customer_phone: str
+    message: str
+
+
+from langchain_core.messages import HumanMessage
+import uuid
 
 @app.post("/order")
 async def create_order(request: OrderRequest, db: AsyncSession = Depends(get_db)):
     try:
-        # 1. AI Extraction: Parse the unstructured WhatsApp message
-        extracted_data = extract_order(request.message)
+        thread_id = str(uuid.uuid4())
         
-        # Determine the earliest deadline from the AI's extracted items
-        deadlines = [item.deadline for item in extracted_data.orders if item.deadline]
-        order_deadline = datetime.strptime(deadlines[0], "%Y-%m-%d").date() if deadlines else None
-        
-        # 2. Database Insertion: Create the Order
-        db_order = Order(
-            customer_phone=request.customer_phone,
-            status="pending",
-            deadline=order_deadline
-        )
-        db.add(db_order)
-        await db.flush() # Flush to get the newly generated db_order.id
-        
-        # 3. Create the Order Items
-        unmatched_items = []
-        for ai_item in extracted_data.orders:
-            # Find the corresponding product in our database (case-insensitive search)
-            stmt = select(Product).where(Product.name.ilike(f"%{ai_item.item}%"))
-            result = await db.execute(stmt)
-            product = result.scalars().first()
-            
-            if product:
-                db_item = OrderItem(
-                    order_id=db_order.id,
-                    product_id=product.id,
-                    quantity=ai_item.quantity
-                )
-                db.add(db_item)
-            else:
-                unmatched_items.append(ai_item.item)
-                
-        await db.commit() # Save everything to PostgreSQL
-        
-        response = {
-            "status": "success", 
-            "order_id": str(db_order.id), 
-            "extracted_data": extracted_data
+        config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "db": db,
+                "customer_phone": request.customer_phone
+            }
         }
         
-        if unmatched_items:
-            response["warning"] = f"These items were not found in the product database: {unmatched_items}"
-            
-        return response
+        # We start the conversation with the human message
+        initial_state = {"messages": [HumanMessage(content=request.message)]}
+        
+        # Invoke LangGraph Workflow
+        final_state = await workflow_graph.ainvoke(initial_state, config)
+        
+        return {
+            "status": "success",
+            "thread_id": thread_id,
+            "is_paused": False,
+            "next_nodes": [],
+            "state": "Processed dynamically"
+        }
+        
+    except Exception as e:
+        await db.rollback()
+        return {"status": "error", "message": str(e)}
+
+@app.post("/resume")
+async def resume_order(request: ResumeRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        config = {
+            "configurable": {
+                "thread_id": request.thread_id,
+                "db": db,
+                "customer_phone": request.customer_phone
+            }
+        }
+        
+        # Append the new message to the existing thread state
+        # Because we use `add_messages` reducer, it appends automatically!
+        update = {"messages": [HumanMessage(content=request.message)]}
+        
+        # Just ainvoke with the new message and config. LangGraph loads history, appends, and runs.
+        final_state = await workflow_graph.ainvoke(update, config)
+        
+        return {
+            "status": "success",
+            "thread_id": request.thread_id,
+            "is_paused": False,
+            "next_nodes": [],
+            "state": "Processed dynamically"
+        }
         
     except Exception as e:
         await db.rollback()

@@ -16,6 +16,12 @@ def _get_experience_score(exp: str) -> int:
     if exp_lower == "medium": return 2
     if exp_lower == "low": return 1
     return 2 # default
+"""
+High   → 3
+Medium → 2
+Low    → 1
+Unknown/missing → 2
+"""
 
 def _get_priority_score(priority: int) -> int:
     # 1=3, 2=2, 3=1
@@ -59,7 +65,7 @@ async def process_allocations(
             remaining_cap * WEIGHTS.get("remaining_capacity", 0) +
             exp_score * WEIGHTS.get("experience", 0) +
             workload * WEIGHTS.get("workload", 0) +
-            prio_score * WEIGHTS.get("priority_bonus", 0)
+            prio_score * WEIGHTS.get("priority_score", 0)
         )
         
         member_id = member.get("member_id")
@@ -127,7 +133,7 @@ async def process_allocations(
                     order_item_id=order_item_id,
                     member_id=uuid.UUID(assign.member_id),
                     allocated_quantity=assign.allocated_quantity,
-                    status="pending"
+                    status="assigned"
                 )
                 db.add(new_allocation)
             await db.commit()
