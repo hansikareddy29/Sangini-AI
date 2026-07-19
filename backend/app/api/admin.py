@@ -3,10 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.database.connection import get_db
-from app.models.models import Order, OrderStatus, OrderItem, Allocation
+from app.models.models import Order, OrderStatus, OrderItem, Allocation, Inventory, Product, InventoryReservation
 from app.websocket.manager import manager
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+@router.get("/logs")
+async def get_admin_logs():
+    return manager.recent_admin_logs
 
 @router.get("/stats")
 async def get_admin_stats(db: AsyncSession = Depends(get_db)):
@@ -31,10 +35,16 @@ async def get_admin_stats(db: AsyncSession = Depends(get_db)):
     # We can estimate this by checking the number of connections in manager.
     shg_members_online = len(manager.active_connections)
 
+    # Detailed Inventory
+    detailed_inv_stmt = select(Product.name, Inventory.available_quantity).join(Inventory, Product.id == Inventory.product_id)
+    detailed_inv_result = await db.execute(detailed_inv_stmt)
+    detailed_inventory = [{"name": row.name, "quantity": row.available_quantity} for row in detailed_inv_result.all()]
+
     return {
         "active_orders": active_orders,
         "shg_members_online": shg_members_online,
-        "pending_allocations": pending_allocations
+        "pending_allocations": pending_allocations,
+        "detailed_inventory": detailed_inventory
     }
 
 from sqlalchemy.orm import selectinload
@@ -49,7 +59,8 @@ async def get_active_orders(db: AsyncSession = Depends(get_db)):
         .where(Order.status.not_in([OrderStatus.completed, OrderStatus.cancelled]))
         .options(
             selectinload(Order.order_items).selectinload(OrderItem.product),
-            selectinload(Order.order_items).selectinload(OrderItem.allocations).selectinload(Allocation.member)
+            selectinload(Order.order_items).selectinload(OrderItem.allocations).selectinload(Allocation.member),
+            selectinload(Order.order_items).selectinload(OrderItem.reservations)
         )
         .order_by(Order.created_at.desc())
     )
@@ -69,6 +80,7 @@ async def get_active_orders(db: AsyncSession = Depends(get_db)):
             item_dict = {
                 "product_name": item.product.name if item.product else "Unknown",
                 "quantity": item.quantity,
+                "reserved_from_inventory": sum(res.reserved_quantity for res in item.reservations),
                 "allocations": []
             }
             for allocation in item.allocations:

@@ -1,9 +1,18 @@
 import json
 import logging
+import os
+import re
+import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
+from pydantic import BaseModel
+
+class SHGMessageRequest(BaseModel):
+    user_id: str
+    message: str
+    is_private: bool
 
 from app.database.connection import get_db
 from app.websocket.manager import manager
@@ -14,18 +23,154 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+@router.post("/shg_message")
+async def send_shg_message(request: SHGMessageRequest, db: AsyncSession = Depends(get_db)):
+    stmt = select(Member).where(Member.user_id == request.user_id)
+    result = await db.execute(stmt)
+    member = result.scalars().first()
+    
+    if not member:
+        return {"status": "error", "message": "Member not found"}
+        
+    import uuid
+    import datetime
+    
+    if request.is_private:
+        db_msg = Message(
+            id=uuid.uuid4(),
+            sender_id=request.user_id,
+            receiver_id=None,
+            message=request.message,
+            message_type="text"
+        )
+        db.add(db_msg)
+        await db.commit()
+        
+        history_stmt = select(Message).where(
+            ((Message.sender_id == request.user_id) & (Message.receiver_id == None)) |
+            ((Message.receiver_id == request.user_id) & (Message.group_id == None))
+        ).order_by(Message.timestamp.asc())
+        history_res = await db.execute(history_stmt)
+        history_msgs = history_res.scalars().all()
+        
+        context_str = "\n".join([f"{'Member' if m.sender_id else 'AI'}: {m.message}" for m in history_msgs[-10:]])
+        
+        from app.services.gemini_services import ask_gemini
+        prompt = f"You are Sangini AI, helping an SHG member named {member.name}. They just said: '{request.message}'. Here is the recent chat history:\n{context_str}\n\nRespond concisely and helpfully."
+        try:
+            ai_reply = ask_gemini(prompt)
+        except:
+            ai_reply = "I'm having trouble right now, please try again."
+            
+        ai_msg = Message(
+            id=uuid.uuid4(),
+            sender_id=None,
+            receiver_id=request.user_id,
+            message=ai_reply.strip(),
+            message_type="text"
+        )
+        db.add(ai_msg)
+        await db.commit()
+        
+        payload = json.dumps({
+            "type": "shg_message",
+            "to_phone": member.phone_number,
+            "message": ai_reply.strip()
+        })
+        await manager.send_personal_message(payload, request.user_id)
+        
+        return {"status": "success"}
+    else:
+        db_msg = Message(
+            id=uuid.uuid4(),
+            sender_id=request.user_id,
+            group_id=member.shg_id,
+            message=request.message,
+            message_type="text"
+        )
+        db.add(db_msg)
+        await db.commit()
+        
+        payload = json.dumps({
+            "type": "shg_message",
+            "sender_id": str(request.user_id),
+            "sender_name": member.name,
+            "group_id": str(member.shg_id),
+            "message": request.message
+        })
+        await manager.broadcast(payload)
+        
+        # Analyze message with Gemini for inventory updates
+        try:
+            from app.services.gemini_services import ask_gemini
+            from app.models.models import Product, Inventory
+            
+            prompt = f"""You are Sangini AI, monitoring an SHG group chat.
+Member '{member.name}' sent the following message: "{request.message}"
+
+Did they report producing new items that need to be added to inventory?
+If so, identify the item name and the quantity produced. Also, write a friendly confirmation message to them. You MUST write it in the language they used (e.g., if they wrote in English, reply in English). However, if they wrote in a mixed language like Hinglish (Hindi written in English alphabet), you MUST reply in proper Hindi using the Devanagari script (e.g. 'धन्यवाद अनीता, मैंने 30 आम के अचार कम्युनिटी इन्वेंट्री में जोड़ दिए हैं!').
+
+Output your response ONLY in valid JSON format like this:
+{{"is_inventory_update": true, "item": "Mango Pickles", "quantity": 30, "reply_message": "धन्यवाद अनीता, मैंने 30 आम के अचार कम्युनिटी इन्वेंट्री में जोड़ दिए हैं!"}}
+or
+{{"is_inventory_update": false}}"""
+
+            ai_content = ask_gemini(prompt)
+            match = re.search(r'\{.*\}', ai_content, re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+                if data.get("is_inventory_update"):
+                    item_name = data.get("item")
+                    quantity = data.get("quantity")
+                    
+                    prod_stmt = select(Product).where(Product.name.ilike(f"%{item_name}%"))
+                    prod_res = await db.execute(prod_stmt)
+                    product = prod_res.scalars().first()
+                    
+                    if product:
+                        inv_stmt = select(Inventory).where(Inventory.product_id == product.id)
+                        inv_res = await db.execute(inv_stmt)
+                        inventory = inv_res.scalars().first()
+                        if inventory:
+                            inventory.available_quantity += int(quantity)
+                            await db.commit()
+                            
+                            reply_text = data.get("reply_message", f"Thanks {member.name}, I've added {quantity} {product.name} to our community inventory!")
+                            
+                            ai_group_msg = Message(
+                                id=uuid.uuid4(),
+                                sender_id=None,
+                                group_id=member.shg_id,
+                                message=reply_text,
+                                message_type="system"
+                            )
+                            db.add(ai_group_msg)
+                            await db.commit()
+                            
+                            ai_payload = json.dumps({
+                                "type": "shg_message",
+                                "sender_id": "system",
+                                "sender_name": "Sangini AI",
+                                "group_id": str(member.shg_id),
+                                "message": reply_text
+                            })
+                            await manager.broadcast(ai_payload)
+                            
+                            # Log to admin page
+                            await manager.broadcast_admin_log("InventoryAgent", f"Processed inventory update: +{quantity} {product.name} (reported by {member.name})")
+        except Exception as e:
+            print(f"Failed to process AI group update: {e}")
+        
+        return {"status": "success"}
+
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await manager.connect(websocket, user_id)
     try:
         while True:
             data = await websocket.receive_text()
-            # We can process incoming messages directly here, or we can handle them
-            # via a REST API. For the hackathon, we'll process chat texts here!
             payload = json.loads(data)
-            
-            # Example payload: {"type": "text", "content": "I need 50 laptops"}
-            # In a real app, we'd save this to the DB and trigger the LangGraph workflow here.
             
             # TODO: Integrate with LangGraph workflow
             
@@ -77,6 +222,33 @@ async def get_group_chat_history(group_id: str, db: AsyncSession = Depends(get_d
         "timestamp": m.timestamp.isoformat(),
         "type": m.message_type
     } for m in messages]
+
+@router.get("/shg_history/{user_id}")
+async def get_shg_history_by_user(user_id: str, db: AsyncSession = Depends(get_db)):
+    """Get chat history for the SHG group that the given user belongs to"""
+    stmt = select(Member).where(Member.user_id == user_id)
+    result = await db.execute(stmt)
+    member = result.scalars().first()
+    
+    if not member:
+        return []
+        
+    result = await db.execute(
+        select(Message, User)
+        .outerjoin(User, Message.sender_id == User.id)
+        .where(Message.group_id == member.shg_id)
+        .order_by(Message.timestamp.asc())
+    )
+    rows = result.all()
+    
+    return [{
+        "id": str(m.id),
+        "sender_id": str(m.sender_id) if m.sender_id else "system",
+        "sender_name": u.name if u else "Sangini AI",
+        "message": m.message,
+        "timestamp": m.timestamp.isoformat(),
+        "type": m.message_type
+    } for m, u in rows]
 
 @router.get("/orders/{phone_number}")
 async def get_customer_orders(phone_number: str, db: AsyncSession = Depends(get_db)):

@@ -7,7 +7,7 @@ from app.agents.inventory_agent import check_inventory_node
 from app.agents.community_agent import check_community_capacity
 from app.agents.allocation_agent import allocate_order
 from app.database.connection import get_db
-from app.models.models import Inventory, Product, Order, OrderItem, OrderStatus
+from app.models.models import Inventory, Product, Order, OrderItem, OrderStatus, Message, User
 from app.schemas.schemas import InventoryResponse
 from app.schemas.state_schema import SharedState
 from app.services.lifecycle_service import transition_order_state
@@ -22,7 +22,7 @@ app = FastAPI(title="Sangini API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Since it's a hackathon demo, allow all
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,6 +64,38 @@ import uuid
 @app.post("/order")
 async def create_order(request: OrderRequest, db: AsyncSession = Depends(get_db)):
     try:
+        # Save customer message to DB
+        stmt = select(User).where(User.phone_number == request.customer_phone)
+        result = await db.execute(stmt)
+        user = result.scalars().first()
+        from langchain_core.messages import HumanMessage, AIMessage
+        langchain_messages = []
+        
+        if user:
+            db_message = Message(
+                id=uuid.uuid4(),
+                sender_id=user.id,
+                message=request.message,
+                message_type="text"
+            )
+            db.add(db_message)
+            await db.commit()
+            
+            history_stmt = select(Message).where(
+                ((Message.sender_id == user.id) & (Message.receiver_id == None)) |
+                ((Message.receiver_id == user.id) & (Message.group_id == None))
+            ).order_by(Message.timestamp.asc())
+            history_res = await db.execute(history_stmt)
+            history_msgs = history_res.scalars().all()
+            
+            for hm in history_msgs:
+                if hm.sender_id:
+                    langchain_messages.append(HumanMessage(content=hm.message))
+                else:
+                    langchain_messages.append(AIMessage(content=hm.message))
+        else:
+            langchain_messages.append(HumanMessage(content=request.message))
+            
         thread_id = str(uuid.uuid4())
         
         config = {
@@ -74,8 +106,8 @@ async def create_order(request: OrderRequest, db: AsyncSession = Depends(get_db)
             }
         }
         
-        # We start the conversation with the human message
-        initial_state = {"messages": [HumanMessage(content=request.message)]}
+        # We start the conversation with the full history
+        initial_state = {"messages": langchain_messages}
         
         # Invoke LangGraph Workflow
         final_state = await workflow_graph.ainvoke(initial_state, config)
@@ -95,6 +127,20 @@ async def create_order(request: OrderRequest, db: AsyncSession = Depends(get_db)
 @app.post("/resume")
 async def resume_order(request: ResumeRequest, db: AsyncSession = Depends(get_db)):
     try:
+        # Save customer message to DB
+        stmt = select(User).where(User.phone_number == request.customer_phone)
+        result = await db.execute(stmt)
+        user = result.scalars().first()
+        if user:
+            db_message = Message(
+                id=uuid.uuid4(),
+                sender_id=user.id,
+                message=request.message,
+                message_type="text"
+            )
+            db.add(db_message)
+            await db.commit()
+
         config = {
             "configurable": {
                 "thread_id": request.thread_id,

@@ -34,7 +34,6 @@ async def check_inventory(order_json: Dict[str, Any], db: AsyncSession) -> Dict[
                 continue
 
             # 1. Find the product in the Products table (case-insensitive)
-            # Use ilike to handle slight mismatches
             product_stmt = select(Product).where(Product.name.ilike(f"%{product_name}%"))
             product_result = await db.execute(product_stmt)
             product = product_result.scalars().first()

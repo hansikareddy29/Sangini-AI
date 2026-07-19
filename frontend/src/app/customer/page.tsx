@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import { Send, Clock, Package, CheckCircle2 } from "lucide-react";
 import { format } from "date-fns";
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8006";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8006";
+
+
 export default function CustomerDashboard() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
@@ -30,14 +34,14 @@ export default function CustomerDashboard() {
     setUser(parsedUser);
 
     const fetchOrders = () => {
-      fetch(`http://localhost:8006/chat/orders/${parsedUser.phone_number}`)
+      fetch(`${BACKEND_URL}/chat/orders/${parsedUser.phone_number}`)
         .then((res) => res.json())
         .then((data) => setOrders(data))
         .catch((err) => console.error("Failed to fetch orders:", err));
     };
 
     // Fetch initial chat history and orders
-    fetch(`http://localhost:8006/chat/history/${parsedUser.id}`)
+    fetch(`${BACKEND_URL}/chat/history/${parsedUser.id}`)
       .then((res) => res.json())
       .then((data) => setMessages(data))
       .catch((err) => console.error("Failed to fetch history:", err));
@@ -45,7 +49,7 @@ export default function CustomerDashboard() {
     fetchOrders();
 
     // Initialize WebSocket
-    ws.current = new WebSocket(`ws://localhost:8006/chat/ws/${parsedUser.id}`);
+    ws.current = new WebSocket(`${WS_URL}/chat/ws/${parsedUser.id}`);
     
     ws.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -95,7 +99,7 @@ export default function CustomerDashboard() {
     // Send to LangGraph backend via REST
     try {
       if (threadId) {
-        const res = await fetch("http://localhost:8006/resume", {
+        const res = await fetch(`${BACKEND_URL}/resume`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -110,7 +114,7 @@ export default function CustomerDashboard() {
         // Update threadId just in case
         if (data.thread_id) setThreadId(data.thread_id);
       } else {
-        const res = await fetch("http://localhost:8006/order", {
+        const res = await fetch(`${BACKEND_URL}/order`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -139,7 +143,7 @@ export default function CustomerDashboard() {
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {orders
-            .filter((order) => ["inventory_reserved", "allocated", "in_production", "ready_for_delivery", "completed"].includes(order.status))
+            .filter((order) => ["pending", "inventory_reserved", "allocated", "in_production", "ready_for_delivery", "completed"].includes(order.status))
             .map((order) => (
             <div key={order.id} className="rounded-lg border p-4 shadow-sm bg-gray-50">
               <div className="flex items-center justify-between mb-2">
@@ -160,7 +164,7 @@ export default function CustomerDashboard() {
               </div>
             </div>
           ))}
-          {orders.filter((order) => ["inventory_reserved", "allocated", "in_production", "ready_for_delivery", "completed"].includes(order.status)).length === 0 && (
+          {orders.filter((order) => ["pending", "inventory_reserved", "allocated", "in_production", "ready_for_delivery", "completed"].includes(order.status)).length === 0 && (
             <p className="text-sm text-gray-500 italic">No active orders found.</p>
           )}
         </div>

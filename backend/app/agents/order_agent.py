@@ -42,7 +42,7 @@ def extract_order(customer_message: str, catalog: list[str]) -> OrderExtraction:
         validated_order = OrderExtraction(**parsed_json)
         return validated_order
     except Exception as e:
-        # In a real production scenario, we'll add retry logic or fallback to human
+        # In a real production scenario, add retry logic or fallback to human
         raise ValueError(f"Failed to parse order from LLM response. Error: {e}\nRaw Response: {raw_response}")
 
 from langchain_core.runnables import RunnableConfig

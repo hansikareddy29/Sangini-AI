@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { User, Users, Shield, ArrowRight } from "lucide-react";
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8006";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8006";
+
+
 export default function Home() {
   const router = useRouter();
   const [users, setUsers] = useState<any[]>([]);
@@ -11,7 +15,7 @@ export default function Home() {
 
   useEffect(() => {
     // Fetch users from backend
-    fetch("http://localhost:8006/chat/users")
+    fetch(`${BACKEND_URL}/chat/users`)
       .then((res) => res.json())
       .then((data) => {
         setUsers(data);

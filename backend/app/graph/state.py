@@ -1,10 +1,3 @@
-"""Strongly typed shared state for Sangini worker agents.
-
-This module is deliberately framework-neutral: it contains Pydantic models
-only, with no LangGraph imports or orchestration logic.  A future graph can
-use ``SharedState`` as its state contract without changing worker data shapes.
-"""
-
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -163,7 +156,7 @@ class FinalResponse(BaseModel):
 class SharedState(BaseModel):
     """The single, serializable source of truth for an order workflow.
 
-    ``inventory``, ``community``, and ``allocation`` results are nested per
+    inventory, community, and allocation results are nested per
     order item so multi-product orders never overwrite one another's results.
     Database sessions and ORM objects deliberately do not belong in state.
     """

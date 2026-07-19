@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import { Send, Users, User as UserIcon } from "lucide-react";
 import { format } from "date-fns";
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8006";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8006";
+
+
 export default function SHGDashboard() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
@@ -28,11 +32,10 @@ export default function SHGDashboard() {
     setUser(parsedUser);
 
     // Initialize WebSocket
-    ws.current = new WebSocket(`ws://localhost:8006/chat/ws/${parsedUser.id}`);
+    ws.current = new WebSocket(`${WS_URL}/chat/ws/${parsedUser.id}`);
     
     ws.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      // For now, we'll just push all incoming messages to the current active view if they match
       if (data.type === "agent_message" && data.to_phone === parsedUser.phone_number) {
          if (activeChat === "private") {
             setMessages((prev) => [
@@ -58,6 +61,20 @@ export default function SHGDashboard() {
                 type: "text",
             },
             ]);
+         } else if (activeChat === "group") {
+            if (data.sender_id !== parsedUser.id) {
+                setMessages((prev) => [
+                ...prev,
+                {
+                    id: Date.now().toString(),
+                    sender_id: data.sender_id || "system", 
+                    sender_name: data.sender_name || "Member",
+                    message: data.message,
+                    timestamp: new Date().toISOString(),
+                    type: "text",
+                },
+                ]);
+            }
          }
       }
     };
@@ -72,28 +89,18 @@ export default function SHGDashboard() {
   // Handle switching chats
   useEffect(() => {
     if (!user) return;
-    
-    // In a real app we'd fetch history based on `activeChat`
-    // For demo purposes we will reset and maybe fetch group history
     setMessages([]);
     
     if (activeChat === "private") {
-        fetch(`http://localhost:8006/chat/history/${user.id}`)
+        fetch(`${BACKEND_URL}/chat/history/${user.id}`)
         .then((res) => res.json())
         .then((data) => setMessages(data))
         .catch((err) => console.error("Failed to fetch history:", err));
     } else {
-        // Group Chat History
-        // We need the group ID, but we can hardcode for the hackathon demo if we assume 1 group
-        setMessages([
-            {
-                id: "1",
-                sender_id: "system",
-                message: "New Order Received: 50 Mango Pickles\nDelivery: Friday\nReply with 'I can make X'",
-                timestamp: new Date().toISOString(),
-                type: "text",
-            }
-        ]);
+        fetch(`${BACKEND_URL}/chat/shg_history/${user.id}`)
+        .then((res) => res.json())
+        .then((data) => setMessages(data))
+        .catch((err) => console.error("Failed to fetch group history:", err));
     }
   }, [activeChat, user]);
 
@@ -117,7 +124,21 @@ export default function SHGDashboard() {
     setMessages((prev) => [...prev, newMessage]);
     setInputMessage("");
 
-    // Here we'd send to backend depending on if it's group or private
+    try {
+      await fetch(`${BACKEND_URL}/chat/shg_message`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          user_id: user.id,
+          message: inputMessage,
+          is_private: activeChat === "private",
+        }),
+      });
+    } catch (error) {
+      console.error("Failed to send message:", error);
+    }
   };
 
   if (!user) return null;
@@ -198,7 +219,7 @@ export default function SHGDashboard() {
                   }`}
                 >
                   {!isMe && activeChat === "group" && !isSystem && (
-                      <p className="text-xs font-bold text-blue-600 mb-1">{msg.sender_id}</p>
+                      <p className="text-xs font-bold text-blue-600 mb-1">{msg.sender_name || "Member"}</p>
                   )}
                   {!isMe && isSystem && (
                       <p className="text-xs font-bold text-purple-600 mb-1">Sangini AI</p>

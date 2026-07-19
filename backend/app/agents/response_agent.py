@@ -70,6 +70,7 @@ Strict Instructions:
 5. If allocation failed because of capacity, apologize and ask if they would accept a partial delivery or revised date.
 6. Keep your response extremely concise (1-2 sentences maximum). DO NOT be overly chatty.
 7. NEVER expose the raw system variables (like NOT_FOUND, need_to_produce). Translate them into natural conversational English.
+8. LANGUAGE & SCRIPT INSTRUCTION: You MUST detect the native language of the Customer's Latest Message (e.g., Hindi, Telugu, Marathi). Even if the customer types their native language using the English alphabet (like Hinglish or Tenglish), you MUST reply in their proper native language using its PROPER NATIVE SCRIPT (e.g., Devanagari script for Hindi, Telugu script for Telugu). Do NOT reply in English or Romanized script unless the user's message is strictly and completely English.
 """
 
     try:
@@ -77,8 +78,38 @@ Strict Instructions:
     except Exception:
         msg = "I'm having a little trouble understanding right now. Could you please try again?"
         
+    db = config["configurable"].get("db")
+    if db and customer_phone:
+        from sqlalchemy import select
+        from app.models.models import User, Message
+        import uuid
+        stmt = select(User).where(User.phone_number == customer_phone)
+        result = await db.execute(stmt)
+        user = result.scalars().first()
+        if user:
+            db_message = Message(
+                id=uuid.uuid4(),
+                sender_id=None,
+                receiver_id=user.id,
+                message=msg.strip(),
+                message_type="text"
+            )
+            db.add(db_message)
+            await db.commit()
+
     await send_whatsapp_message(customer_phone, msg.strip())
     
+    # Broadcast order update if an order was processed in this turn
+    order = state.get("order", {})
+    if order.get("order_id") and db and customer_phone:
+        from app.websocket.manager import manager
+        import json
+        stmt = select(User).where(User.phone_number == customer_phone)
+        result = await db.execute(stmt)
+        user = result.scalars().first()
+        if user:
+            payload = json.dumps({"type": "order_update", "order_id": order.get("order_id"), "status": "pending"})
+            await manager.send_personal_message(payload, str(user.id))
     # We append the AI's response to the message history so context is kept!
     from langchain_core.messages import AIMessage
     

@@ -13,7 +13,8 @@ from app.agents.community_agent import check_community_capacity
 from app.agents.allocation_agent import allocate_order
 from app.agents.response_agent import generate_response_node
 from app.services.lifecycle_service import transition_order_state
-from app.models.models import OrderStatus, Order, OrderItem, Product
+from app.models.models import OrderStatus, Order, OrderItem, Product, InventoryReservation, Inventory
+import uuid
 
 # --- Wrappers for nodes that need DB ---
 
@@ -66,11 +67,43 @@ async def save_order_node(state: SharedState, config: RunnableConfig) -> Dict[st
     
     order_data = state.get("order", {})
     order_data["order_id"] = str(db_order.id)
+    
+    # Order update broadcast moved to response_agent to ensure proper ordering
+        
     return {"order": order_data}
 
 async def inventory_node_wrapper(state: SharedState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     res = await check_inventory_node(state, db)
+    
+    order_id = state.get("order", {}).get("order_id")
+    if order_id:
+        try:
+            # Create InventoryReservation records for reserved items
+            status_list = res.get("inventory", {}).get("inventory_status", [])
+            for item_status in status_list:
+                reserved_qty = item_status.get("reserved_quantity", 0)
+                if reserved_qty > 0:
+                    product_name = item_status.get("product_name")
+                    # Find OrderItem and Inventory
+                    stmt = select(OrderItem.id, Inventory.id).join(Product, OrderItem.product_id == Product.id).join(Inventory, Product.id == Inventory.product_id).where(OrderItem.order_id == uuid.UUID(order_id), Product.name == product_name)
+                    item_res = await db.execute(stmt)
+                    row = item_res.first()
+                    if row:
+                        order_item_id, inventory_id = row
+                        reservation = InventoryReservation(
+                            inventory_id=inventory_id,
+                            order_item_id=order_item_id,
+                            reserved_quantity=reserved_qty
+                        )
+                        db.add(reservation)
+            await db.commit()
+            
+            await transition_order_state(order_id, OrderStatus.inventory_reserved, db)
+        except Exception as e:
+            await db.rollback()
+            print(f"Failed to transition order {order_id} to inventory_reserved: {e}")
+            
     return res
 
 async def community_node_wrapper(state: SharedState, config: RunnableConfig) -> Dict[str, Any]:

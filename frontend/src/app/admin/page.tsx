@@ -4,10 +4,15 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Users, Package, Activity, LogOut, X, ChevronRight, CheckCircle2, Clock } from "lucide-react";
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8006";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8006";
+
+
 interface AdminStats {
   active_orders: number;
   shg_members_online: number;
   pending_allocations: number;
+  detailed_inventory?: {name: string; quantity: number}[];
 }
 
 interface AdminLog {
@@ -25,6 +30,7 @@ interface AllocationDetail {
 interface OrderItemDetail {
   product_name: string;
   quantity: number;
+  reserved_from_inventory: number;
   allocations: AllocationDetail[];
 }
 
@@ -42,7 +48,8 @@ export default function AdminDashboard() {
   const [stats, setStats] = useState<AdminStats>({
     active_orders: 0,
     shg_members_online: 0,
-    pending_allocations: 0
+    pending_allocations: 0,
+    detailed_inventory: []
   });
   const [logs, setLogs] = useState<AdminLog[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -65,22 +72,37 @@ export default function AdminDashboard() {
     }
     setUser(parsedUser);
 
-    // Fetch initial stats
-    fetch("http://localhost:8006/admin/stats")
+    // Fetch initial stats & orders
+    fetch(`${BACKEND_URL}/admin/stats`)
       .then(res => res.json())
       .then(data => setStats(data))
       .catch(err => console.error("Failed to fetch admin stats", err));
+      
+    fetch(`${BACKEND_URL}/admin/orders`)
+      .then(res => res.json())
+      .then(data => setActiveOrders(data))
+      .catch(err => console.error("Failed to fetch active orders", err));
+
+    fetch(`${BACKEND_URL}/admin/logs`)
+      .then(res => res.json())
+      .then(data => setLogs(data))
+      .catch(err => console.error("Failed to fetch admin logs", err));
 
     // Poll stats every 5 seconds
     const interval = setInterval(() => {
-      fetch("http://localhost:8006/admin/stats")
+      fetch(`${BACKEND_URL}/admin/stats`)
         .then(res => res.json())
         .then(data => setStats(data))
         .catch(err => console.error("Failed to fetch admin stats", err));
+        
+      fetch(`${BACKEND_URL}/admin/orders`)
+        .then(res => res.json())
+        .then(data => setActiveOrders(data))
+        .catch(err => console.error("Failed to fetch active orders", err));
     }, 5000);
 
     // Connect WebSocket
-    const ws = new WebSocket(`ws://localhost:8006/chat/ws/${parsedUser.id}`);
+    const ws = new WebSocket(`${WS_URL}/chat/ws/${parsedUser.id}`);
     
     ws.onopen = () => {
       console.log("Admin WebSocket connected");
@@ -118,7 +140,7 @@ export default function AdminDashboard() {
   const handleOpenOrdersModal = () => {
     setIsOrdersModalOpen(true);
     setIsLoadingOrders(true);
-    fetch("http://localhost:8006/admin/orders")
+    fetch(`${BACKEND_URL}/admin/orders`)
       .then(res => res.json())
       .then(data => {
         setActiveOrders(data);
@@ -183,7 +205,7 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-4">
           <div 
             onClick={handleOpenOrdersModal}
             className="rounded-xl border bg-white p-6 shadow-sm cursor-pointer hover:shadow-md hover:scale-105 hover:border-green-400 transition-all group"
@@ -202,97 +224,93 @@ export default function AdminDashboard() {
             <h3 className="text-sm font-medium text-gray-500">Pending Allocations</h3>
             <p className="mt-2 text-3xl font-bold text-gray-900">{stats.pending_allocations}</p>
           </div>
-        </div>
-
-        <div className="mt-8 rounded-xl border bg-white shadow-sm">
-          <div className="border-b p-6">
-            <h3 className="text-lg font-semibold text-gray-900">Live AI Activity Log</h3>
-          </div>
-          <div className="p-6 h-96 overflow-y-auto space-y-4 font-mono text-sm">
-            {logs.length === 0 ? (
-              <div className="text-gray-400 italic">No recent activity. Place an order to see AI logs.</div>
-            ) : (
-              logs.map((log, i) => (
-                <div key={i} className="flex items-center space-x-3">
-                  <span className="text-gray-400">{log.timestamp}</span>
-                  <span className={
-                    log.agent === 'OrderAgent' ? 'text-blue-600' :
-                    log.agent === 'InventoryAgent' ? 'text-purple-600' :
-                    log.agent === 'AllocationAgent' ? 'text-green-600' :
-                    'text-gray-600'
-                  }>
-                    {log.agent}: {log.message}
-                  </span>
-                </div>
-              ))
-            )}
-            <div ref={logsEndRef} />
-          </div>
-        </div>
-      </div>
-
-      {/* Active Orders Modal */}
-      {isOrdersModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50/80">
-              <h2 className="text-xl font-bold text-gray-900 flex items-center space-x-2">
-                <Package className="text-green-600" size={24} />
-                <span>Active Orders Details</span>
-              </h2>
-              <button onClick={() => setIsOrdersModalOpen(false)} className="p-2 text-gray-400 hover:bg-gray-200 hover:text-gray-700 rounded-full transition-colors">
-                <X size={20} />
-              </button>
+          <div className="rounded-xl border bg-white p-6 shadow-sm">
+            <h3 className="text-sm font-medium text-gray-500 mb-4">Detailed Inventory Items</h3>
+            <div className="space-y-3">
+              {stats.detailed_inventory && stats.detailed_inventory.length > 0 ? (
+                stats.detailed_inventory.map((item, idx) => (
+                  <div key={idx} className="flex justify-between items-center bg-gray-50 p-2 rounded-md">
+                    <span className="font-medium text-gray-700">{item.name}</span>
+                    <span className="font-bold text-green-600">{item.quantity}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-gray-400">No inventory available.</div>
+              )}
             </div>
-            
-            <div className="p-6 overflow-y-auto flex-1 bg-gray-50/30">
-              {isLoadingOrders ? (
-                <div className="flex justify-center items-center h-48">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
-                </div>
-              ) : activeOrders.length === 0 ? (
+          </div>
+        </div>
+
+        <div className="mt-8 grid gap-8 md:grid-cols-2">
+          {/* Active Orders List */}
+          <div className="rounded-xl border bg-white shadow-sm flex flex-col h-[500px]">
+            <div className="border-b p-6 flex justify-between items-center">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center space-x-2">
+                <Package className="text-green-600" size={20} />
+                <span>Live Orders & Allocations</span>
+              </h3>
+            </div>
+            <div className="p-6 flex-1 overflow-y-auto bg-gray-50/50">
+              {activeOrders.length === 0 ? (
                 <div className="text-center text-gray-500 py-12">
                   <Package size={48} className="mx-auto text-gray-300 mb-4" />
-                  <p className="text-lg">No active orders found.</p>
+                  <p className="text-sm">No active orders right now.</p>
                 </div>
               ) : (
-                <div className="space-y-6">
+                <div className="space-y-4">
                   {activeOrders.map(order => (
-                    <div key={order.id} className="bg-white border rounded-xl shadow-sm overflow-hidden transition-shadow hover:shadow-md">
-                      <div className="px-6 py-4 border-b bg-gray-50 flex justify-between items-center">
-                        <div className="flex items-center space-x-4">
-                          <span className="font-mono text-sm text-gray-500">#{order.id.substring(0,8)}</span>
-                          <span className="text-sm font-medium text-gray-900">{order.customer_phone}</span>
+                    <div key={order.id} className="bg-white border rounded-xl shadow-sm overflow-hidden">
+                      <div className="px-4 py-3 border-b bg-gray-50 flex justify-between items-center">
+                        <div className="flex items-center space-x-3">
+                          <span className="font-mono text-xs text-gray-500">#{order.id.substring(0,8)}</span>
+                          <span className="text-xs font-medium text-gray-900">{order.customer_phone}</span>
                         </div>
                         {getStatusBadge(order.status)}
                       </div>
                       
-                      <div className="px-6 py-4 divide-y">
+                      <div className="px-4 py-3 divide-y">
                         {order.items.map((item, idx) => (
-                          <div key={idx} className="py-4 first:pt-0 last:pb-0">
-                            <div className="flex justify-between items-center mb-3">
-                              <h4 className="font-semibold text-gray-800">{item.quantity}x {item.product_name}</h4>
+                          <div key={idx} className="py-3 first:pt-0 last:pb-0">
+                            <div className="flex justify-between items-center mb-2">
+                              <h4 className="font-medium text-sm text-gray-800">{item.quantity}x {item.product_name}</h4>
                             </div>
                             
-                            {item.allocations.length > 0 ? (
-                              <div className="bg-green-50/50 rounded-lg p-3 border border-green-100">
-                                <h5 className="text-xs font-bold text-green-800 uppercase tracking-wider mb-2">SHG Allocations</h5>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                            {item.reserved_from_inventory >= item.quantity ? (
+                              <div className="text-xs text-emerald-600 italic bg-emerald-50 px-2 py-1 rounded border border-emerald-100 inline-block font-medium flex items-center space-x-1">
+                                <CheckCircle2 size={12} />
+                                <span>Fulfilled directly from Community Inventory</span>
+                              </div>
+                            ) : item.allocations.length > 0 ? (
+                              <div className="bg-green-50/50 rounded-lg p-2 border border-green-100">
+                                <h5 className="text-[10px] font-bold text-green-800 uppercase tracking-wider mb-1.5 flex justify-between">
+                                  <span>Allocated To SHG Members</span>
+                                  {item.reserved_from_inventory > 0 && (
+                                    <span className="text-emerald-600 lowercase font-normal italic">({item.reserved_from_inventory} taken from inventory)</span>
+                                  )}
+                                </h5>
+                                <div className="grid grid-cols-2 gap-2">
                                   {item.allocations.map((alloc, aidx) => (
-                                    <div key={aidx} className="flex items-center space-x-2 bg-white rounded-md p-2 shadow-sm border border-green-50">
-                                      <div className="w-8 h-8 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold text-xs">
+                                    <div key={aidx} className="flex items-center space-x-2 bg-white rounded-md p-1.5 shadow-sm border border-green-50">
+                                      <div className="w-6 h-6 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold text-[10px]">
                                         {alloc.member_name.charAt(0)}
                                       </div>
                                       <div>
-                                        <div className="text-sm font-medium text-gray-900">{alloc.member_name}</div>
-                                        <div className="text-xs text-gray-500">{alloc.allocated_quantity} units</div>
+                                        <div className="text-xs font-medium text-gray-900 truncate max-w-[80px]">{alloc.member_name}</div>
+                                        <div className="text-[10px] text-gray-500">{alloc.allocated_quantity} units</div>
                                       </div>
                                     </div>
                                   ))}
                                 </div>
                               </div>
                             ) : (
-                              <div className="text-sm text-gray-400 italic">No specific SHG member allocations for this item yet.</div>
+                              <div className="flex items-center space-x-2">
+                                {item.reserved_from_inventory > 0 && (
+                                  <div className="text-[10px] text-emerald-600 italic bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
+                                    {item.reserved_from_inventory} from inventory
+                                  </div>
+                                )}
+                                <div className="text-xs text-orange-500 italic bg-orange-50 px-2 py-1 rounded border border-orange-100 inline-block">Pending allocation</div>
+                              </div>
                             )}
                           </div>
                         ))}
@@ -303,8 +321,35 @@ export default function AdminDashboard() {
               )}
             </div>
           </div>
+
+          {/* AI Activity Log */}
+          <div className="rounded-xl border bg-white shadow-sm flex flex-col h-[500px]">
+            <div className="border-b p-6">
+              <h3 className="text-lg font-semibold text-gray-900">Live AI Activity Log</h3>
+            </div>
+            <div className="p-6 flex-1 overflow-y-auto space-y-4 font-mono text-sm">
+              {logs.length === 0 ? (
+                <div className="text-gray-400 italic">No recent activity. Place an order to see AI logs.</div>
+              ) : (
+                logs.map((log, i) => (
+                  <div key={i} className="flex items-start space-x-3">
+                    <span className="text-gray-400 shrink-0 mt-0.5">{log.timestamp}</span>
+                    <span className={
+                      log.agent === 'OrderAgent' ? 'text-blue-600' :
+                      log.agent === 'InventoryAgent' ? 'text-purple-600' :
+                      log.agent === 'AllocationAgent' ? 'text-green-600' :
+                      'text-gray-600'
+                    }>
+                      <span className="font-semibold">{log.agent}:</span> {log.message}
+                    </span>
+                  </div>
+                ))
+              )}
+              <div ref={logsEndRef} />
+            </div>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

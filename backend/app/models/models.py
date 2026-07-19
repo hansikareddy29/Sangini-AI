@@ -146,6 +146,7 @@ class OrderItem(Base):
     order = relationship("Order", back_populates="order_items")
     product = relationship("Product", back_populates="order_items")
     allocations = relationship("Allocation", back_populates="order_item", cascade="all, delete-orphan")
+    reservations = relationship("InventoryReservation", back_populates="order_item", cascade="all, delete-orphan")
 
 class Allocation(Base):
     __tablename__ = "allocations"
@@ -170,4 +171,4 @@ class InventoryReservation(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     inventory = relationship("Inventory")
-    order_item = relationship("OrderItem")
+    order_item = relationship("OrderItem", back_populates="reservations")

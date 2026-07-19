@@ -9,6 +9,7 @@ class ConnectionManager:
     def __init__(self):
         # Maps user_id to a list of active websocket connections (a user might have multiple tabs)
         self.active_connections: Dict[str, List[WebSocket]] = {}
+        self.recent_admin_logs = []
 
     async def connect(self, websocket: WebSocket, user_id: str):
         await websocket.accept()
@@ -59,12 +60,17 @@ class ConnectionManager:
     async def broadcast_admin_log(self, agent: str, message: str):
         import datetime
         now = datetime.datetime.now().strftime("%H:%M:%S")
-        payload = json.dumps({
+        log_entry = {
             "type": "admin_log",
             "agent": agent,
             "message": message,
             "timestamp": f"[{now}]"
-        })
+        }
+        self.recent_admin_logs.append(log_entry)
+        if len(self.recent_admin_logs) > 50:
+            self.recent_admin_logs.pop(0)
+            
+        payload = json.dumps(log_entry)
         await self.broadcast(payload)
 
 manager = ConnectionManager()
