@@ -47,66 +47,290 @@ Sangini AI provides three distinct, real-time user interfaces powered by **Next.
 * **Database:** PostgreSQL (Asyncpg) with SQLAlchemy ORM. Atomic transactions and strictly relational schema design.
 
 ---
+# 🚀 Local Setup Guide
 
-## ⚙️ Local Installation & Quick Start
+## Prerequisites
 
-Follow these steps to run Sangini AI locally. If you downloaded the ZIP file, ensure you have **Docker**, **Python 3.10+**, and **Node.js** installed on your machine.
+Before starting, ensure the following are installed on your system:
 
-### 1. Database Setup (Docker)
-We use Docker to instantly spin up a local PostgreSQL database with the exact schema needed.
-Open a terminal in the root project folder (where `docker-compose.yml` is located) and run:
+- Git
+- Python 3.11+
+- Node.js (v18 or later)
+- npm
+- Docker Engine
+- Docker Compose (v2)
+
+Verify your installation:
+
 ```bash
-docker-compose up -d
+git --version
+python3 --version
+node --version
+npm --version
+docker --version
+docker compose version
 ```
-*This will pull the Postgres image, start the database on port 5432, and automatically initialize all the required tables using `schema.sql`.*
 
-### 2. Backend Setup (FastAPI)
-Open a new terminal window:
+If `docker compose version` returns an error or Docker is not installed, install Docker first.
+
+---
+
+# Install Docker (Ubuntu)
+
+Update packages:
+
+```bash
+sudo apt update
+```
+
+Install Docker:
+
+```bash
+sudo apt install docker.io docker-compose-v2 -y
+```
+
+Start Docker:
+
+```bash
+sudo systemctl start docker
+```
+
+Enable Docker on boot:
+
+```bash
+sudo systemctl enable docker
+```
+
+(Optional) Allow Docker to run without sudo:
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+Log out and log back in (or reboot), then verify:
+
+```bash
+docker --version
+docker compose version
+```
+
+---
+
+# Clone the Repository
+
+```bash
+git clone <repository-url>
+cd Sangini-AI
+```
+
+---
+
+# 1. Database Setup (Docker)
+
+From the project root:
+
+```bash
+docker compose up -d
+```
+
+Verify the database is running:
+
+```bash
+docker ps
+```
+
+Expected output should include:
+
+```
+sangini_db
+```
+
+---
+
+# 2. Backend Setup (FastAPI)
+
+Open a new terminal:
+
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+```
+
+Create a virtual environment:
+
+```bash
+python3 -m venv venv
+```
+
+Activate it:
+
+### Linux/macOS
+
+```bash
+source venv/bin/activate
+```
+
+### Windows
+
+```powershell
+venv\Scripts\activate
+```
+
+Install dependencies:
+
+```bash
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the `backend/` directory:
+Create a `.env` file:
+
 ```env
-# Connects to the local Docker database
 DATABASE_URL=postgresql+asyncpg://sangini_user:sangini_password@localhost:5432/sangini_db
-OPEN_ROUTER_API_KEY=your_gemini_or_openrouter_api_key
+OPEN_ROUTER_API_KEY=YOUR_OPENROUTER_API_KEY
 ```
 
-Seed the database with dummy test users and start the server:
+Seed the database:
+
 ```bash
 python seed.py
-uvicorn app.main:app --host 0.0.0.0 --port 8006
 ```
 
-### 3. Frontend Setup (Next.js)
-Open a third terminal window:
+Run the backend:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8006 --reload
+```
+
+---
+
+# 3. Frontend Setup (Next.js)
+
+Open another terminal:
+
 ```bash
 cd frontend
+```
+
+Install dependencies:
+
+```bash
 npm install
 ```
 
-Create a `.env.local` file in the `frontend/` directory:
+Create `.env.local`:
+
 ```env
 NEXT_PUBLIC_BACKEND_URL=http://localhost:8006
 NEXT_PUBLIC_WS_URL=ws://localhost:8006
 ```
 
-Start the frontend development server:
+Run the frontend:
+
 ```bash
 npm run dev
 ```
 
-### 4. View the Dashboards
-Open your browser and navigate to:
-- **Customer View:** `http://localhost:3000/customer`
-- **SHG Member View:** `http://localhost:3000/shg`
-- **Admin View:** `http://localhost:3000/admin`
+---
+
+# 4. Access the Application
+
+Open your browser:
+
+Customer Dashboard
+
+```
+http://localhost:3000/customer
+```
+
+SHG Dashboard
+
+```
+http://localhost:3000/shg
+```
+
+Admin Dashboard
+
+```
+http://localhost:3000/admin
+```
 
 ---
 
+# Stopping the Application
+
+Stop the backend/frontend using:
+
+```
+Ctrl + C
+```
+
+Stop the database:
+
+```bash
+docker compose down
+```
+
+---
+
+# Troubleshooting
+
+### Docker not running
+
+Start Docker:
+
+```bash
+sudo systemctl start docker
+```
+
+---
+
+### Permission denied while running Docker
+
+Run:
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+Log out and log back in.
+
+---
+
+### PostgreSQL container not starting
+
+Remove old containers:
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+---
+
+### Backend cannot connect to database
+
+Verify the database is running:
+
+```bash
+docker ps
+```
+
+You should see:
+
+```
+sangini_db
+```
+
+---
+
+### Check service logs
+
+Database logs:
+
+```bash
+docker logs sangini_db
+```
+
+Backend logs appear directly in the terminal where FastAPI is running.
 ## 🏆 Hackathon Details
 Built with ❤️ for empowering Women SHGs.
