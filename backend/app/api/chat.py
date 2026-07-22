@@ -100,7 +100,7 @@ async def send_shg_message(request: SHGMessageRequest, db: AsyncSession = Depend
         })
         await manager.broadcast(payload)
         
-        # Analyze message with Gemini for inventory updates
+        # Analyze message with Gemini for inventory updates AND general group replies
         try:
             from app.services.gemini_services import ask_gemini
             from app.models.models import Product, Inventory
@@ -113,13 +113,15 @@ If so, identify the item name and the quantity produced. Also, write a friendly 
 
 Output your response ONLY in valid JSON format like this:
 {{"is_inventory_update": true, "item": "Mango Pickles", "quantity": 30, "reply_message": "धन्यवाद अनीता, मैंने 30 आम के अचार कम्युनिटी इन्वेंट्री में जोड़ दिए हैं!"}}
-or
-{{"is_inventory_update": false}}"""
+or if NOT an inventory update, still reply helpfully:
+{{"is_inventory_update": false, "reply_message": "A short, helpful, friendly reply in the same language the member used."}}"""
 
             ai_content = ask_gemini(prompt)
             match = re.search(r'\{.*\}', ai_content, re.DOTALL)
             if match:
                 data = json.loads(match.group(0))
+                inventory_updated = False
+                
                 if data.get("is_inventory_update"):
                     item_name = data.get("item")
                     quantity = data.get("quantity")
@@ -135,32 +137,53 @@ or
                         if inventory:
                             inventory.available_quantity += int(quantity)
                             await db.commit()
-                            
-                            reply_text = data.get("reply_message", f"Thanks {member.name}, I've added {quantity} {product.name} to our community inventory!")
-                            
-                            ai_group_msg = Message(
-                                id=uuid.uuid4(),
-                                sender_id=None,
-                                group_id=member.shg_id,
-                                message=reply_text,
-                                message_type="system"
-                            )
-                            db.add(ai_group_msg)
-                            await db.commit()
-                            
-                            ai_payload = json.dumps({
-                                "type": "shg_message",
-                                "sender_id": "system",
-                                "sender_name": "Sangini AI",
-                                "group_id": str(member.shg_id),
-                                "message": reply_text
-                            })
-                            await manager.broadcast(ai_payload)
-                            
-                            # Log to admin page
+                            inventory_updated = True
                             await manager.broadcast_admin_log("InventoryAgent", f"Processed inventory update: +{quantity} {product.name} (reported by {member.name})")
+
+                # Always send an AI reply to the group chat
+                reply_text = data.get("reply_message", f"Thanks {member.name}, noted!")
+                
+                ai_group_msg = Message(
+                    id=uuid.uuid4(),
+                    sender_id=None,
+                    group_id=member.shg_id,
+                    message=reply_text,
+                    message_type="system"
+                )
+                db.add(ai_group_msg)
+                await db.commit()
+                
+                ai_payload = json.dumps({
+                    "type": "shg_message",
+                    "sender_id": "system",
+                    "sender_name": "Sangini AI",
+                    "group_id": str(member.shg_id),
+                    "message": reply_text
+                })
+                await manager.broadcast(ai_payload)
         except Exception as e:
-            print(f"Failed to process AI group update: {e}")
+            logger.error(f"Failed to process AI group update: {e}")
+            # Send a fallback reply so the user knows the AI received their message
+            try:
+                fallback_msg = Message(
+                    id=uuid.uuid4(),
+                    sender_id=None,
+                    group_id=member.shg_id,
+                    message="मुझे अभी थोड़ी परेशानी हो रही है, कृपया थोड़ी देर बाद फिर कोशिश करें। / I'm having a little trouble right now, please try again shortly.",
+                    message_type="system"
+                )
+                db.add(fallback_msg)
+                await db.commit()
+                fallback_payload = json.dumps({
+                    "type": "shg_message",
+                    "sender_id": "system",
+                    "sender_name": "Sangini AI",
+                    "group_id": str(member.shg_id),
+                    "message": fallback_msg.message
+                })
+                await manager.broadcast(fallback_payload)
+            except Exception as inner_e:
+                logger.error(f"Failed to send fallback group message: {inner_e}")
         
         return {"status": "success"}
 
